@@ -1,22 +1,22 @@
 import os
-import cv2
-import numpy as np
 from zipfile import ZipFile
-from src.config import DATA_DIR, IMG_SIZE
 
-def extract_zip(zip_path, extract_to):
-    """Extracts a given zip file."""
-    os.makedirs(extract_to, exist_ok=True)
-    with ZipFile(zip_path, 'r') as zip_ref:
-        zip_ref.extractall(extract_to)
-    print(f"✅ Extracted: {zip_path}")
+REFERENCE_ZIP = "/content/gender_verification/data/raw/short_references_final.zip"
+DISTORTION_ZIP = "/content/gender_verification/data/raw/short_distortion_final.zip"
+OUTPUT_DIR = "data/extracted"
 
-def load_and_preprocess_image(path):
-    """Loads, resizes, and normalizes an image."""
-    img = cv2.imread(path)
-    if img is None:
-        return None
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
-    img = img.astype('float32') / 255.0
-    return img
+if not os.path.exists(OUTPUT_DIR):
+    os.makedirs(OUTPUT_DIR)
+
+print("📦 Starting file extraction...")
+
+def extract_zip(src, dest):
+    if os.path.exists(src):
+        with ZipFile(src, 'r') as zf:
+            zf.extractall(dest)
+        print(f"✅ Extracted {src} to {dest}")
+    else:
+        print(f"⚠️ {src} not found!")
+
+extract_zip(REFERENCE_ZIP, f"{OUTPUT_DIR}/ref")
+extract_zip(DISTORTION_ZIP, f"{OUTPUT_DIR}/distorted")

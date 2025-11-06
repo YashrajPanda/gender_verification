@@ -1,43 +1,56 @@
-import os
-import random
-import numpy as np
+import os, random
 import tensorflow as tf
-from src.config import IMG_SIZE, EPOCHS, STEPS_PER_EPOCH, BATCH_SIZE, MODEL_PATH
-from src.data_preparation import load_and_preprocess_image
-from src.model_siamese import build_siamese_model, contrastive_loss
+from tensorflow import keras
+from src.utils import *
 
-def siamese_pair_generator(image_paths_by_person, person_ids, batch_size):
+EPOCHS, BATCH_SIZE, STEPS_PER_EPOCH = 10, 32, 32
+MODEL_PATH = "models/face_embedding_model_CLEAN.h5"
+DATA_DIR = "data/extracted"
+
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
+os.makedirs("models", exist_ok=True)
+
+reference, distorted = {}, {}
+for root, _, files in os.walk(DATA_DIR):
+    for f in files:
+        pid = person_id_from_filename(f)
+        if pid == "UNKNOWN": continue
+        path = os.path.join(root, f)
+        if "ref" in root: reference.setdefault(pid, []).append(path)
+        else: distorted.setdefault(pid, []).append(path)
+
+PERSON_IDS = list(set(reference.keys()) & set(distorted.keys()))
+merged = {k: reference.get(k, []) + distorted.get(k, []) for k in PERSON_IDS}
+
+def pair_generator(paths_by_person, ids, batch_size):
     while True:
-        ref_images, dist_images, labels = [], [], []
+        refs, dists, labels = [], [], []
         for _ in range(batch_size):
-            pid = random.choice(person_ids)
-            paths = image_paths_by_person.get(pid, [])
-            if len(paths) < 2:
-                continue
+            pid = random.choice(ids)
+            imgs = paths_by_person.get(pid, [])
+            if len(imgs) < 2: continue
             if random.random() < 0.5:
-                img1, img2 = random.sample(paths, 2)
-                label = 1.0
+                p1, p2 = random.sample(imgs, 2); label = 1.0
             else:
-                p1, p2 = random.sample(person_ids, 2)
-                img1 = random.choice(image_paths_by_person[p1])
-                img2 = random.choice(image_paths_by_person[p2])
+                pid1, pid2 = random.sample(ids, 2)
+                p1, p2 = random.choice(paths_by_person[pid1]), random.choice(paths_by_person[pid2])
                 label = 0.0
-            im1 = load_and_preprocess_image(img1)
-            im2 = load_and_preprocess_image(img2)
-            if im1 is not None and im2 is not None:
-                ref_images.append(im1)
-                dist_images.append(im2)
-                labels.append(label)
-        yield ((np.array(ref_images), np.array(dist_images)), np.array(labels))
+            i1, i2 = load_and_preprocess_image(p1), load_and_preprocess_image(p2)
+            if i1 is not None and i2 is not None:
+                refs.append(i1); dists.append(i2); labels.append(label)
+        yield ((np.array(refs), np.array(dists)), np.array(labels))
 
-def train_model(image_paths_by_person, person_ids):
-    input_shape = (IMG_SIZE, IMG_SIZE, 3)
-    siamese_model = build_siamese_model(input_shape)
-    siamese_model.compile(optimizer=tf.keras.optimizers.Adam(1e-4), loss=contrastive_loss)
-    generator = siamese_pair_generator(image_paths_by_person, person_ids, BATCH_SIZE)
-    siamese_model.fit(generator, epochs=EPOCHS, steps_per_epoch=STEPS_PER_EPOCH)
-    feature_extractor = siamese_model.get_layer("feature_extractor")
-    os.makedirs("models", exist_ok=True)
-    feature_extractor.save(MODEL_PATH, include_optimizer=False)
-    print(f"✅ Model saved at {MODEL_PATH}")
-    return feature_extractor
+input_shape = (IMG_SIZE, IMG_SIZE, 3)
+
+if os.path.exists(MODEL_PATH):
+    print("✅ Model found, loading...")
+    model = keras.models.load_model(MODEL_PATH, compile=False)
+else:
+    print("🚀 Training new Siamese model...")
+    model = build_siamese_model(input_shape)
+    model.compile(optimizer=keras.optimizers.Adam(1e-4), loss=contrastive_loss)
+    gen = pair_generator(merged, PERSON_IDS, BATCH_SIZE)
+    model.fit(gen, epochs=EPOCHS, steps_per_epoch=STEPS_PER_EPOCH, verbose=1)
+    model.get_layer("feature_extractor").save(MODEL_PATH, include_optimizer=False)
+    print("✅ Model saved to:", MODEL_PATH)
+  
